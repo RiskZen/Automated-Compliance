@@ -1,0 +1,7 @@
+Control_ID,Control_Title,Control_Text
+AC-02,Account Management,The organization employs the principle of least privilege and enforces multifactor authentication for network access to privileged accounts.
+SC-28,Protection of Information at Rest,The information system protects the confidentiality and integrity of information at rest using cryptographic mechanisms.
+SI-02,Flaw Remediation,The organization identifies, reports, and corrects information system flaws. Critical flaws must be addressed within a specified time frame.
+AU-11,Audit Record Retention,The organization retains audit records for the time period defined in the record retention policy to provide support for after-the-fact investigations.
+CP-09,Information System Backup,The organization conducts backups of user-level information and system-level information contained in the information system and tests backup information.
+

@@ -1,0 +1,6 @@
+Policy_ID,Policy_Title,Policy_Text
+POL-IAM-01,Access Control Policy,All users must have unique IDs and use Multi-Factor Authentication (MFA) for remote access to the production environment.
+POL-ENC-02,Data Encryption Standard,All Customer Data at rest must be encrypted using strong cryptography (AES-256 or higher).
+POL-VM-03,Vulnerability Management,Critical vulnerabilities on public-facing assets must be remediated within 48 hours of detection.
+POL-LOG-04,Audit Logging Policy,System logs must be retained for at least 365 days and reviewed daily for anomalies.
+POL-BCP-05,Backup Policy,Critical databases must be backed up daily and tested for restoration quarterly.

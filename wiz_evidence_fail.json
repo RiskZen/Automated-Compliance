@@ -1,0 +1,25 @@
+{
+    "source": "Wiz Cloud Security",
+    "scan_id": "scan-9988776",
+    "timestamp": "2025-12-03T12:30:00Z",
+    "asset": {
+      "type": "AWS EC2 Instance",
+      "resource_id": "i-0a1b2c3d4e5f67890",
+      "tags": {
+        "Environment": "Production"
+      }
+    },
+    "findings": {
+      "critical_vulnerabilities": [
+        {
+          "cve_id": "CVE-2024-5501",
+          "severity": "CRITICAL",
+          "description": "Remote Code Execution in OpenSSH",
+          "status": "Open",
+          "days_open": 15
+        }
+      ],
+      "high_vulnerabilities": []
+    },
+    "patch_status": "Non-Compliant"
+  }

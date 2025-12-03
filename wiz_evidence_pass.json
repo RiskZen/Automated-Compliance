@@ -1,0 +1,25 @@
+{
+    "source": "Wiz Cloud Security",
+    "scan_id": "scan-1029384",
+    "timestamp": "2025-12-03T14:00:00Z",
+    "asset": {
+      "type": "AWS S3 Bucket",
+      "resource_id": "arn:aws:s3:::prod-customer-data",
+      "region": "us-east-1"
+    },
+    "configuration": {
+      "server_side_encryption": {
+        "status": "Enabled",
+        "algorithm": "AES-256",
+        "kms_master_key_id": "alias/aws/s3"
+      },
+      "public_access_block": {
+        "block_public_acls": true,
+        "block_public_policy": true,
+        "ignore_public_acls": true,
+        "restrict_public_buckets": true
+      },
+      "versioning": "Enabled"
+    },
+    "vulnerabilities": []
+  }

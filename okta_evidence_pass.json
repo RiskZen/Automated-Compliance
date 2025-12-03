@@ -1,0 +1,26 @@
+{
+    "source": "Okta Identity Provider",
+    "api_endpoint": "/api/v1/policies",
+    "timestamp": "2025-12-03T09:15:00Z",
+    "policy_config": {
+      "name": "Global Default MFA",
+      "status": "ACTIVE",
+      "priority": 1,
+      "conditions": {
+        "people": {
+          "groups": {
+            "include": ["EVERYONE"]
+          }
+        }
+      },
+      "settings": {
+        "mfa_lifetime": 60,
+        "prompt": "ALWAYS",
+        "authenticators": [
+          "Okta Verify",
+          "Google Authenticator",
+          "FIDO2 (WebAuthn)"
+        ]
+      }
+    }
+  }
