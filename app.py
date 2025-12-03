@@ -45,31 +45,26 @@ def call_gemini(prompt):
         else:
             return "Error: GOOGLE_API_KEY missing in Secrets."
 
-        # 2. Define list of likely models to try (Newest to Oldest)
+        # 2. UPDATED LIST: Prioritize the models actually available to your key
         candidate_models = [
-            'gemini-1.5-flash',
-            'gemini-1.5-flash-latest',
-            'gemini-1.5-pro',
-            'gemini-pro',
-            'gemini-1.0-pro'
+            'gemini-flash-latest',       # Best choice (Generic Alias)
+            'gemini-2.5-flash',          # High speed 2025 model
+            'gemini-2.0-flash',          # Fallback
+            'gemini-pro-latest'          # Fallback Pro
         ]
 
-        # 3. Try to generate content with the first one that works
+        # 3. Try to generate content
         for model_name in candidate_models:
             try:
+                # print(f"Trying model: {model_name}...") # Debugging line
                 model = genai.GenerativeModel(model_name)
                 response = model.generate_content(prompt)
                 return response.text
             except Exception:
                 continue # Try the next model in the list
 
-        # 4. If ALL fail, check what is actually available
-        available_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
-        
-        return f"❌ Error: No working model found. Available models for your key: {available_models}"
+        # 4. Final Fallback if loop finishes without success
+        return "❌ Error: Could not connect to any Gemini model. Check API Quota."
 
     except Exception as e:
         return f"System Error: {e}"
