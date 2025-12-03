@@ -39,16 +39,24 @@ def load_embedding_model():
 
 def call_gemini(prompt):
     try:
+        # Retrieve API Key
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
-            return response.text
+            
+            # TRY PRIMARY MODEL (Flash - Fast)
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                response = model.generate_content(prompt)
+                return response.text
+            except:
+                # FALLBACK MODEL (Pro - if Flash fails)
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content(prompt)
+                return response.text
         else:
             return "Error: GOOGLE_API_KEY missing in Secrets."
     except Exception as e:
         return f"AI Error: {e}"
-
 def save_mapping(cid, ctxt, ptxt, plan):
     c.execute("INSERT INTO mappings VALUES (?, ?, ?, ?, ?)", (cid, ctxt, ptxt, plan, 'Untested'))
     conn.commit()
