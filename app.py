@@ -11,7 +11,7 @@ import random
 # --- 1. CONFIG & SETUP ---
 st.set_page_config(page_title="UCF Enterprise Platform", page_icon="🛡️", layout="wide")
 
-# Initialize SQLite (Ephemeral for Cloud Demo)
+# Initialize SQLite
 conn = sqlite3.connect('grc_cloud.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS mappings (control_id TEXT, control_text TEXT, policy_text TEXT, ai_plan TEXT, status TEXT)''')
@@ -39,7 +39,6 @@ def load_embedding_model():
 
 def call_gemini(prompt):
     try:
-        # Retrieve API Key from Streamlit Secrets
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
             model = genai.GenerativeModel('gemini-1.5-flash')
@@ -63,26 +62,45 @@ def save_audit(cid, src, res, reason):
 # --- 4. PAGE ROUTING ---
 def render_ingestion():
     st.title("📂 Data Ingestion")
+    st.info("Please upload valid CSV files (Comma Separated Values).")
+    
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<div class="main-card"><h3>1. Policies</h3>', unsafe_allow_html=True)
-        f = st.file_uploader("Internal Policies CSV", key="p")
-        if f: st.session_state['p_df'] = pd.read_csv(f); st.success("Loaded")
+        f = st.file_uploader("Internal Policies CSV", key="p", type=["csv"])
+        if f: 
+            try:
+                st.session_state['p_df'] = pd.read_csv(f, encoding='utf-8-sig')
+                st.success(f"Loaded {len(st.session_state['p_df'])} rows")
+            except Exception as e:
+                st.error(f"Error reading file: {e}. Check if it is a valid CSV.")
         st.markdown('</div>', unsafe_allow_html=True)
+        
     with c2:
         st.markdown('<div class="main-card"><h3>2. Controls</h3>', unsafe_allow_html=True)
-        f = st.file_uploader("Regulatory Controls CSV", key="u")
-        if f: st.session_state['u_df'] = pd.read_csv(f); st.success("Loaded")
+        f = st.file_uploader("Regulatory Controls CSV", key="u", type=["csv"])
+        if f: 
+            try:
+                st.session_state['u_df'] = pd.read_csv(f, encoding='utf-8-sig')
+                st.success(f"Loaded {len(st.session_state['u_df'])} rows")
+            except Exception as e:
+                st.error(f"Error reading file: {e}. Check if it is a valid CSV.")
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_mapping():
     st.title("🔗 Control Mapping")
-    if 'p_df' not in st.session_state: st.warning("Upload data first."); return
+    if 'p_df' not in st.session_state or 'u_df' not in st.session_state: 
+        st.warning("Please upload both CSV files in the 'Ingestion' tab first."); return
     
     st.markdown('<div class="main-card">', unsafe_allow_html=True)
     if st.button("🚀 Run AI Mapping", use_container_width=True):
         embedder = load_embedding_model()
         p_df, u_df = st.session_state['p_df'], st.session_state['u_df']
+        
+        # Check required columns
+        if 'Policy_Text' not in p_df.columns: st.error("Policy CSV missing 'Policy_Text' column"); return
+        if 'Control_Text' not in u_df.columns: st.error("Controls CSV missing 'Control_Text' column"); return
+
         p_emb = embedder.encode(p_df['Policy_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
         u_emb = embedder.encode(u_df['Control_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
         
@@ -120,14 +138,17 @@ def render_testing():
         st.markdown('<div class="main-card"><h3>📡 Evidence Connector</h3>', unsafe_allow_html=True)
         f = st.file_uploader("Upload Wiz/AWS JSON", type=['json'])
         if f and st.button("Run AI Audit"):
-            evidence = json.load(f)
-            st.json(evidence, expanded=False)
-            with st.spinner("Analyzing..."):
-                res = call_gemini(f"Role: Auditor. Control: {row['control_text']}. Evidence: {evidence}. Rules: If evidence supports control, output 'PASS'. If not, output 'FAIL'. Follow with 1 sentence reason.")
-                status = "PASS" if "PASS" in res.upper() else "FAIL"
-                save_audit(sel, "JSON Upload", status, res)
-                if status == "PASS": st.success(f"✅ {res}")
-                else: st.error(f"❌ {res}")
+            try:
+                evidence = json.load(f)
+                st.json(evidence, expanded=False)
+                with st.spinner("Analyzing..."):
+                    res = call_gemini(f"Role: Auditor. Control: {row['control_text']}. Evidence: {evidence}. Rules: If evidence supports control, output 'PASS'. If not, output 'FAIL'. Follow with 1 sentence reason.")
+                    status = "PASS" if "PASS" in res.upper() else "FAIL"
+                    save_audit(sel, "JSON Upload", status, res)
+                    if status == "PASS": st.success(f"✅ {res}")
+                    else: st.error(f"❌ {res}")
+            except Exception as e:
+                st.error(f"Invalid JSON file: {e}")
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_dashboard():
