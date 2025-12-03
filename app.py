@@ -39,27 +39,40 @@ def load_embedding_model():
 
 def call_gemini(prompt):
     try:
-        # Retrieve API Key
+        # 1. Setup API
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            
-            # TRY PRIMARY MODEL (Flash - Fast)
-            try:
-                model = genai.GenerativeModel('gemini-1.5-flash-latest')
-                response = model.generate_content(prompt)
-                return response.text
-            except:
-                # FALLBACK MODEL (Pro - if Flash fails)
-                model = genai.GenerativeModel('gemini-pro')
-                response = model.generate_content(prompt)
-                return response.text
         else:
             return "Error: GOOGLE_API_KEY missing in Secrets."
+
+        # 2. Define list of likely models to try (Newest to Oldest)
+        candidate_models = [
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-latest',
+            'gemini-1.5-pro',
+            'gemini-pro',
+            'gemini-1.0-pro'
+        ]
+
+        # 3. Try to generate content with the first one that works
+        for model_name in candidate_models:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                return response.text
+            except Exception:
+                continue # Try the next model in the list
+
+        # 4. If ALL fail, check what is actually available
+        available_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+        
+        return f"❌ Error: No working model found. Available models for your key: {available_models}"
+
     except Exception as e:
-        return f"AI Error: {e}"
-def save_mapping(cid, ctxt, ptxt, plan):
-    c.execute("INSERT INTO mappings VALUES (?, ?, ?, ?, ?)", (cid, ctxt, ptxt, plan, 'Untested'))
-    conn.commit()
+        return f"System Error: {e}"
 
 def save_audit(cid, src, res, reason):
     c.execute("UPDATE mappings SET status = ? WHERE control_id = ?", (res, cid))
