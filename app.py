@@ -43,22 +43,43 @@ def call_gemini(prompt):
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
             
-            # Smart Model Selection
-            candidate_models = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro']
+            # --- FIX: ROBUST MODEL SELECTION ---
+            # 1. Try the generic "latest" tags first (most likely to work)
+            candidate_models = [
+                'gemini-flash-latest', 
+                'gemini-2.0-flash', 
+                'gemini-1.5-flash',
+                'gemini-pro'
+            ]
+            
             for model_name in candidate_models:
                 try:
                     model = genai.GenerativeModel(model_name)
                     response = model.generate_content(prompt)
                     return response.text
                 except:
-                    continue
-            return "❌ Error: No working Gemini model found for this key."
+                    continue # Try next model
+            
+            # 2. If hardcoded list fails, ask Google what is available dynamically
+            try:
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        try:
+                            model = genai.GenerativeModel(m.name)
+                            response = model.generate_content(prompt)
+                            return response.text
+                        except:
+                            continue
+            except:
+                pass
+
+            return "❌ Error: No working Gemini model found. Check API Quota."
         else:
             return "Error: GOOGLE_API_KEY missing in Secrets."
     except Exception as e:
         return f"AI Error: {e}"
 
-# --- ENTERPRISE PROMPTS (THE UPGRADE) ---
+# --- ENTERPRISE PROMPTS ---
 def generate_ai_guidance(control_text, policy_text):
     prompt = f"""
     You are a Senior IT Security Auditor (CISA).
@@ -97,7 +118,7 @@ def run_ai_audit(control_text, evidence_json):
     """
     return call_gemini(prompt)
 
-# --- DB HELPERS (THE FIX IS HERE) ---
+# --- DB HELPERS ---
 def save_mapping(cid, ctxt, ptxt, plan):
     c.execute("INSERT INTO mappings VALUES (?, ?, ?, ?, ?)", (cid, ctxt, ptxt, plan, 'Untested'))
     conn.commit()
@@ -161,9 +182,7 @@ def render_mapping():
             best_idx = torch.topk(scores, k=1)[1][0].item()
             ctrl = u_df.iloc[best_idx]
             
-            # Using the NEW Enterprise Prompt
             plan = generate_ai_guidance(ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'])
-            
             save_mapping(ctrl['Control_ID'], ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'], plan)
         st.success("Mapping Saved to DB")
     st.markdown('</div>', unsafe_allow_html=True)
@@ -196,12 +215,9 @@ def render_testing():
                 st.markdown(f"<div class='agent-terminal'>{json.dumps(evidence, indent=2)[:500]}...</div>", unsafe_allow_html=True)
                 
                 with st.spinner("Analyzing Evidence..."):
-                    # Using the NEW Enterprise Prompt
                     res = run_ai_audit(row['control_text'], evidence)
-                    
                     status = "PASS" if "PASS" in res.upper() else "FAIL"
                     save_audit(sel, "JSON Upload", status, res)
-                    
                     if status == "PASS": st.success(f"✅ {res}")
                     else: st.error(f"❌ {res}")
             except Exception as e:
