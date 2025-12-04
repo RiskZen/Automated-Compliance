@@ -18,35 +18,30 @@ c = conn.cursor()
 # Create Tables
 c.execute('''CREATE TABLE IF NOT EXISTS mappings 
              (control_id TEXT PRIMARY KEY, control_text TEXT, policy_text TEXT, ai_plan TEXT, status TEXT, last_result TEXT, last_updated TEXT)''')
+# Added 'evidence_file' column to track filename
+c.execute('''CREATE TABLE IF NOT EXISTS audit_logs 
+             (timestamp TEXT, control_id TEXT, evidence_source TEXT, result TEXT, reason TEXT)''')
 conn.commit()
 
 # --- 2. SAAS UI CSS ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    
-    /* GLOBAL */
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #0f172a; }
     .stApp { background-color: #f8fafc; }
     
-    /* SIDEBAR (Dark Navy) */
     section[data-testid="stSidebar"] { background-color: #020617; border-right: 1px solid #1e293b; }
     section[data-testid="stSidebar"] * { color: #94a3b8 !important; font-weight: 500; }
     div[data-testid="stRadio"] label:hover { background-color: #1e293b; color: white !important; }
     div[data-testid="stRadio"] label[data-checked="true"] { background-color: #2563eb !important; color: white !important; font-weight: 600; }
     
-    /* CARDS */
     .main-card { background-color: white; border-radius: 12px; padding: 25px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05); border: 1px solid #e2e8f0; margin-bottom: 20px; }
-    
-    /* METRICS */
     .metric-val { font-size: 2.5rem; font-weight: 700; color: #0f172a; }
     .metric-lbl { color: #64748b; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; }
     
-    /* RESULT BOXES */
     .result-box-pass { border-left: 5px solid #22c55e; background-color: #f0fdf4; padding: 15px; border-radius: 6px; border: 1px solid #bbf7d0; }
     .result-box-fail { border-left: 5px solid #ef4444; background-color: #fef2f2; padding: 15px; border-radius: 6px; border: 1px solid #fecaca; }
     
-    /* BUTTONS */
     .stButton>button { background-color: #2563eb; color: white; border-radius: 8px; font-weight: 600; border: none; padding: 0.5rem 1rem; }
     .stButton>button:hover { background-color: #1d4ed8; }
 </style>
@@ -72,15 +67,18 @@ def call_gemini(prompt):
     except Exception as e: return f"Error: {e}"
 
 def db_save_mapping(cid, ctext, ptext, plan):
-    # Insert or Replace allows us to update mappings without duplicates
     c.execute("INSERT OR REPLACE INTO mappings (control_id, control_text, policy_text, ai_plan, status, last_result, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
               (cid, ctext, ptext, plan, 'Untested', None, None))
     conn.commit()
 
-def db_update_audit(cid, status, result_text):
+def db_update_audit(cid, status, result_text, filename):
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Update latest status
     c.execute("UPDATE mappings SET status = ?, last_result = ?, last_updated = ? WHERE control_id = ?",
               (status, result_text, ts, cid))
+    # Log history
+    c.execute("INSERT INTO audit_logs VALUES (?, ?, ?, ?, ?)", 
+              (ts, cid, filename, status, result_text))
     conn.commit()
 
 def db_get_mappings():
@@ -90,11 +88,13 @@ def db_get_control(cid):
     c.execute("SELECT * FROM mappings WHERE control_id = ?", (cid,))
     return c.fetchone()
 
-# --- 4. PAGE: INGESTION & MAPPING ---
+def db_get_history(cid):
+    return pd.read_sql("SELECT timestamp, evidence_source, result, reason FROM audit_logs WHERE control_id = ? ORDER BY timestamp DESC", conn, params=(cid,))
+
+# --- 4. PAGE: INGESTION ---
 def render_ingestion():
     st.title("📂 Data Ingestion & Mapping")
     
-    # Store CSVs in session state (files are temporary, DB is permanent)
     if 'p_df' not in st.session_state: st.session_state['p_df'] = None
     if 'u_df' not in st.session_state: st.session_state['u_df'] = None
 
@@ -111,7 +111,6 @@ def render_ingestion():
         if f2: st.session_state['u_df'] = pd.read_csv(f2); st.success(f"Loaded {len(st.session_state['u_df'])} rows")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ACTION BUTTON
     st.markdown("### 🚀 AI Core")
     if st.button("Run AI Semantic Mapping", use_container_width=True):
         if st.session_state['p_df'] is None or st.session_state['u_df'] is None:
@@ -129,17 +128,12 @@ def render_ingestion():
             st.write("Generating Plans & Saving to DB...")
             bar = st.progress(0)
             
-            # Map top 5 for demo speed
             for i in range(len(p_df.head(5))):
                 bar.progress((i+1)/5)
                 scores = util.cos_sim(p_emb[i], u_emb)[0]
                 best_idx = torch.topk(scores, k=1)[1][0].item()
                 ctrl = u_df.iloc[best_idx]
-                
-                # AI Plan
                 plan = call_gemini(f"Role: Auditor. Control: {ctrl['Control_Text']}. Policy: {p_df.iloc[i]['Policy_Text']}. Task: Write 3-step audit plan.")
-                
-                # Save to SQLite
                 db_save_mapping(ctrl['Control_ID'], ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'], plan)
             
             st.success("✅ Mapping Saved to Database!")
@@ -148,21 +142,17 @@ def render_ingestion():
 def render_view_mappings():
     st.title("🔗 Mapped Controls")
     df = db_get_mappings()
-    
-    if df.empty:
-        st.info("Database is empty. Go to **Ingestion** to run mapping.")
-        return
+    if df.empty: st.info("Database is empty. Go to **Ingestion**."); return
 
     st.markdown(f"**Total Controls:** {len(df)}")
-    
     for i, row in df.iterrows():
-        status_icon = "🟢" if row['status'] == 'PASS' else "🔴" if row['status'] == 'FAIL' else "⚪"
-        with st.expander(f"{status_icon} {row['control_id']} (Status: {row['status']})"):
+        icon = "🟢" if row['status'] == 'PASS' else "🔴" if row['status'] == 'FAIL' else "⚪"
+        with st.expander(f"{icon} {row['control_id']} (Status: {row['status']})"):
             st.markdown(f"**Control:** {row['control_text']}")
             st.markdown(f"**Policy:** {row['policy_text']}")
             st.caption(f"**Test Plan:** {row['ai_plan']}")
 
-# --- 6. PAGE: CONTROL TESTING (With Persistence) ---
+# --- 6. PAGE: CONTROL TESTING (Updated History) ---
 def render_testing():
     st.title("🤖 Automated Control Testing")
     
@@ -174,11 +164,7 @@ def render_testing():
     with c1:
         st.markdown('<div class="main-card">', unsafe_allow_html=True)
         selected_id = st.selectbox("Select Control", df['control_id'])
-        
-        # Fetch current state from DB
-        # Columns: 0:id, 1:text, 2:policy, 3:plan, 4:status, 5:result, 6:updated
-        record = db_get_control(selected_id) 
-        
+        record = db_get_control(selected_id)
         st.info(f"**Requirement:** {record[1]}")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -197,37 +183,45 @@ def render_testing():
                     res = call_gemini(prompt)
                     status = "PASS" if "PASS" in res.upper() else "FAIL"
                     
-                    # Update DB
-                    db_update_audit(selected_id, status, res)
-                    st.rerun() # Refresh to show result
+                    # Update DB (Pass filename as source)
+                    db_update_audit(selected_id, status, res, f.name)
+                    st.rerun()
 
-        # 3. SHOW PERSISTENT RESULT (From DB)
-        current_status = record[4] # Status column
-        current_result = record[5] # Last Result Text column
-        last_updated = record[6]   # Timestamp column
-
+        # 3. CURRENT STATUS
+        current_status = record[4]
+        current_result = record[5]
+        
         if current_status != 'Untested' and current_result:
             css_class = "result-box-pass" if current_status == "PASS" else "result-box-fail"
             icon = "✅" if current_status == "PASS" else "❌"
-            
-            st.markdown(f"""
-            <div class="{css_class}">
-                <h4 style="margin:0;">{icon} Audit Result: {current_status}</h4>
-                <p style="margin-top:10px;">{current_result}</p>
-                <small style="color:#64748b;">Last Updated: {last_updated}</small>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="{css_class}"><h4>{icon} Latest Result: {current_status}</h4><p>{current_result}</p></div>""", unsafe_allow_html=True)
             
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 7. PAGE: DASHBOARD (Last Option) ---
+    # 4. AUDIT HISTORY (NEW SECTION)
+    st.markdown("### 📜 Audit History for " + selected_id)
+    history_df = db_get_history(selected_id)
+    
+    if not history_df.empty:
+        st.dataframe(
+            history_df, 
+            use_container_width=True,
+            column_config={
+                "timestamp": "Time",
+                "evidence_source": "Evidence File",
+                "result": "Status",
+                "reason": "AI Logic"
+            }
+        )
+    else:
+        st.info("No audit history found for this control.")
+
+# --- 7. PAGE: DASHBOARD ---
 def render_dashboard():
     st.title("📊 Executive Dashboard")
     df = db_get_mappings()
-    
     if df.empty: st.info("No data yet."); return
 
-    # Metrics
     total = len(df)
     passed = len(df[df['status'] == 'PASS'])
     failed = len(df[df['status'] == 'FAIL'])
@@ -241,27 +235,18 @@ def render_dashboard():
     c4.markdown(f'<div class="main-card"><div class="metric-val" style="color:#64748b">{untested}</div><div class="metric-lbl">Untested</div></div>', unsafe_allow_html=True)
 
     st.write("---")
+    col1, col2 = st.columns(2)
     
-    # Charts
-    col_chart1, col_chart2 = st.columns(2)
-    
-    with col_chart1:
+    with col1:
         st.subheader("Control Status")
-        chart_data = pd.DataFrame({
-            'Status': ['Passing', 'Failing', 'Untested'],
-            'Count': [passed, failed, untested]
-        })
-        fig = px.pie(chart_data, values='Count', names='Status', hole=0.4,
-                     color='Status', color_discrete_map={'Passing':'#22c55e', 'Failing':'#ef4444', 'Untested':'#cbd5e1'})
+        chart_data = pd.DataFrame({'Status': ['Passing', 'Failing', 'Untested'], 'Count': [passed, failed, untested]})
+        fig = px.pie(chart_data, values='Count', names='Status', hole=0.4, color='Status', 
+                     color_discrete_map={'Passing':'#22c55e', 'Failing':'#ef4444', 'Untested':'#cbd5e1'})
         st.plotly_chart(fig, use_container_width=True)
 
-    with col_chart2:
+    with col2:
         st.subheader("Risk by Domain")
-        # Mocking domains since we don't have them in schema yet
-        domain_data = pd.DataFrame({
-            "Domain": ["Access", "Encryption", "Logging", "Network"],
-            "Risk": [10, 80, 20, 40]
-        })
+        domain_data = pd.DataFrame({"Domain": ["Access", "Encryption", "Logging", "Network"], "Risk": [10, 80, 20, 40]})
         fig2 = px.bar(domain_data, x="Domain", y="Risk", color="Risk", color_continuous_scale="Reds")
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -274,13 +259,11 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
-    # UPDATED MENU ORDER
     page = st.radio("Menu", ["Ingestion", "Mapped Controls", "Control Testing", "Dashboard"], label_visibility="collapsed")
     
     st.write("---")
     if st.button("Reset Database"):
-        c.execute("DELETE FROM mappings")
-        conn.commit()
+        c.execute("DELETE FROM mappings"); c.execute("DELETE FROM audit_logs"); conn.commit()
         st.rerun()
 
 if page == "Ingestion": render_ingestion()
