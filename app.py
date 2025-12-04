@@ -38,13 +38,11 @@ st.markdown("""
     
     /* --- SIDEBAR CONTAINER --- */
     section[data-testid="stSidebar"] { 
-        background-color: #020617; /* Exact Dark Navy from Image */
+        background-color: #020617; 
         border-right: 1px solid #1e293b;
     }
     
     /* --- MENU STYLING --- */
-    
-    /* Menu Header ("Menu") */
     .menu-header {
         color: #94a3b8;
         font-size: 13px;
@@ -54,19 +52,13 @@ st.markdown("""
         padding-left: 10px;
     }
     
-    /* Radio Button Container */
-    div[data-testid="stRadio"] {
-        background-color: transparent;
-    }
-
-    /* The Text Labels (Dashboard, Data Ingestion, etc) */
     div[data-testid="stRadio"] label {
         background-color: transparent;
         padding: 12px 10px;
         border-radius: 6px;
         transition: all 0.2s;
         margin-bottom: 2px;
-        color: #94a3b8 !important; /* Muted Grey by default */
+        color: #94a3b8 !important; /* Muted Grey default */
         font-weight: 500;
         font-size: 15px;
         cursor: pointer;
@@ -76,18 +68,17 @@ st.markdown("""
     
     /* Hover State */
     div[data-testid="stRadio"] label:hover {
-        color: #ffffff !important; /* White on hover */
+        color: #ffffff !important;
         background-color: rgba(255, 255, 255, 0.05);
     }
     
-    /* Active State (Selected) */
+    /* Active State */
     div[data-testid="stRadio"] label[data-checked="true"] {
         color: #ffffff !important; /* Bright White */
         font-weight: 600;
-        background-color: transparent; /* Clean look */
+        background-color: transparent;
     }
     
-    /* Remove the default Radio Circles */
     div[data-testid="stRadio"] div[role="radiogroup"] > label > div:first-child {
         display: none;
     }
@@ -103,7 +94,7 @@ st.markdown("""
     .logo-box {
         width: 40px;
         height: 40px;
-        background-color: #3b82f6; /* Bright Blue */
+        background-color: #3b82f6;
         border-radius: 8px;
         display: flex;
         align-items: center;
@@ -115,7 +106,7 @@ st.markdown("""
     .logo-text {
         font-size: 18px;
         font-weight: 600;
-        color: #f1f5f9; /* White text */
+        color: #f1f5f9;
     }
 
     /* --- MAIN CONTENT STYLING --- */
@@ -128,7 +119,6 @@ st.markdown("""
         margin-bottom: 20px; 
     }
     
-    /* Metric Cards */
     .metric-card {
         background-color: white;
         border-radius: 12px;
@@ -143,11 +133,9 @@ st.markdown("""
     .metric-value { font-size: 2.5rem; font-weight: 700; color: #0f172a; margin: 0; }
     .metric-label { font-size: 0.8rem; font-weight: 700; color: #64748b; text-transform: uppercase; margin-top: 5px; }
     
-    /* Result Badges */
     .pass-badge { color: #166534; background: #dcfce7; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 12px; }
     .fail-badge { color: #991b1b; background: #fee2e2; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 12px; }
 
-    /* Buttons */
     .stButton>button { 
         background-color: #2563eb; 
         color: white; 
@@ -201,7 +189,149 @@ def db_get_control(cid):
 def db_get_history(cid):
     return pd.read_sql("SELECT timestamp, evidence_source, result, reason FROM audit_logs WHERE control_id = ? ORDER BY timestamp DESC", conn, params=(cid,))
 
-# --- 4. PAGE: DASHBOARD (Updated Design) ---
+# --- 4. PAGE: DATA INGESTION & RUN MAPPING ---
+def render_ingestion():
+    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Data Ingestion</div>', unsafe_allow_html=True)
+    st.title("Data Ingestion")
+    
+    if 'p_df' not in st.session_state: st.session_state['p_df'] = None
+    if 'u_df' not in st.session_state: st.session_state['u_df'] = None
+
+    # UPLOAD SECTION
+    st.markdown('<div class="main-card">', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("1. Internal Policies")
+        f1 = st.file_uploader("Upload CSV", key="p", type=["csv"])
+        if f1: st.session_state['p_df'] = pd.read_csv(f1); st.success(f"Ready: {len(st.session_state['p_df'])} policies")
+    
+    with c2:
+        st.subheader("2. Regulatory Controls")
+        f2 = st.file_uploader("Upload CSV", key="u", type=["csv"])
+        if f2: st.session_state['u_df'] = pd.read_csv(f2); st.success(f"Ready: {len(st.session_state['u_df'])} controls")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ACTION BUTTON (MOVED HERE)
+    st.markdown("### 🚀 AI Core")
+    
+    if st.button("Run AI Semantic Mapping", use_container_width=True):
+        if st.session_state['p_df'] is None or st.session_state['u_df'] is None:
+            st.error("Please upload both CSV files first.")
+            return
+            
+        with st.status("🧠 AI Mapping & Database Sync...", expanded=True):
+            st.write("Vectorizing Data...")
+            embedder = load_embedding_model()
+            p_df, u_df = st.session_state['p_df'], st.session_state['u_df']
+            
+            p_emb = embedder.encode(p_df['Policy_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
+            u_emb = embedder.encode(u_df['Control_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
+            
+            st.write("Generating Audit Plans...")
+            bar = st.progress(0)
+            
+            # Simple loop for demo (Top 5 rows)
+            for i in range(len(p_df.head(5))):
+                bar.progress((i+1)/5)
+                scores = util.cos_sim(p_emb[i], u_emb)[0]
+                best_idx = torch.topk(scores, k=1)[1][0].item()
+                ctrl = u_df.iloc[best_idx]
+                
+                # Gemini Call
+                plan = call_gemini(f"Role: Auditor. Control: {ctrl['Control_Text']}. Policy: {p_df.iloc[i]['Policy_Text']}. Task: Write concise test procedure.")
+                
+                # DB Save
+                db_save_mapping(ctrl['Control_ID'], ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'], plan)
+            
+            st.success("Mapping Complete & Saved to Database!")
+            st.info("Navigate to **Control Mapping** to view the results.")
+
+# --- 5. PAGE: CONTROL MAPPING (VIEW ONLY) ---
+def render_mapping_view():
+    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Control Mapping</div>', unsafe_allow_html=True)
+    st.title("Control Mapping View")
+    
+    df = db_get_mappings()
+    
+    if df.empty:
+        st.warning("⚠️ No mappings found. Please go to **Data Ingestion** and run the AI Mapping first.")
+        return
+
+    st.markdown('<div class="main-card">', unsafe_allow_html=True)
+    st.subheader(f"Mapped Relationships ({len(df)} Controls)")
+    st.write("The AI has aligned your Internal Policies with the Regulatory Framework:")
+    
+    # Display simplified table of mappings
+    display_df = df[['control_id', 'control_text', 'policy_text']].rename(columns={
+        'control_id': 'Control ID',
+        'control_text': 'UCF Control Requirement',
+        'policy_text': 'Mapped Internal Policy'
+    })
+    
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# --- 6. PAGE: EVALUATION GUIDANCE ---
+def render_evaluation():
+    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Evaluation Guidance</div>', unsafe_allow_html=True)
+    st.title("Evaluation Guidance")
+    
+    df = db_get_mappings()
+    if df.empty: st.info("No mappings found. Please run Data Ingestion first."); return
+
+    st.markdown(f"**Total Controls:** {len(df)}")
+    
+    for i, row in df.iterrows():
+        icon = "🟢" if row['status'] == 'PASS' else "🔴" if row['status'] == 'FAIL' else "⚪"
+        with st.expander(f"{icon} {row['control_id']} (Status: {row['status']})"):
+            st.markdown(f"**Control:** {row['control_text']}")
+            st.markdown(f"**Policy:** {row['policy_text']}")
+            st.divider()
+            st.markdown("**🤖 AI Test Plan:**")
+            st.info(row['ai_plan'])
+
+# --- 7. PAGE: AUDIT AGENTS ---
+def render_agents():
+    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Audit Agents</div>', unsafe_allow_html=True)
+    st.title("Audit Agents")
+    
+    df = db_get_mappings()
+    if df.empty: st.warning("Please map controls first."); return
+    
+    st.markdown('<div class="main-card">', unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 2])
+    
+    with c1:
+        selected_id = st.selectbox("Select Control to Audit", df['control_id'])
+        record = df[df['control_id'] == selected_id].iloc[0]
+        st.info(f"**Req:** {record['control_text']}")
+
+    with c2:
+        st.subheader("📡 Evidence Connector")
+        f = st.file_uploader("Upload Wiz/AWS JSON", type=['json'], key=f"up_{selected_id}")
+        
+        if f:
+            evidence = json.load(f)
+            if st.button("Run AI Audit"):
+                with st.spinner("Analyzing..."):
+                    prompt = f"Role: Auditor. Control: {record['control_text']}. Evidence: {json.dumps(evidence)}. Output: 'PASS' or 'FAIL' followed by 1 sentence reason."
+                    res = call_gemini(prompt)
+                    status = "PASS" if "PASS" in res.upper() else "FAIL"
+                    db_update_audit(selected_id, status, res, f.name)
+                    st.rerun()
+    
+    if record['status'] != 'Untested':
+        badge_class = "pass-badge" if record['status'] == 'PASS' else "fail-badge"
+        st.markdown(f"""<div style="margin-top:20px; padding:15px; border:1px solid #e2e8f0; border-radius:8px;">
+            <span class="{badge_class}">{record['status']}</span> <span style="margin-left:10px;">{record['last_result']}</span>
+        </div>""", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown(f"### 📜 Audit History")
+    history = db_get_history(selected_id)
+    if not history.empty: st.dataframe(history, use_container_width=True)
+
+# --- 8. PAGE: DASHBOARD ---
 def render_dashboard():
     # Breadcrumb & Title
     st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Dashboard</div>', unsafe_allow_html=True)
@@ -217,7 +347,7 @@ def render_dashboard():
     untested = len(df[df['status'] == 'Untested'])
     score = int((passed / total) * 100) if total > 0 else 0
 
-    # Custom HTML Metric Cards
+    # Metrics
     c1, c2, c3, c4 = st.columns(4)
     
     def metric_html(val, lbl, color="#0f172a"):
@@ -260,133 +390,17 @@ def render_dashboard():
         st.plotly_chart(fig2, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 5. PAGE: INGESTION ---
-def render_ingestion():
-    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Ingestion</div>', unsafe_allow_html=True)
-    st.title("Data Ingestion")
-    
-    if 'p_df' not in st.session_state: st.session_state['p_df'] = None
-    if 'u_df' not in st.session_state: st.session_state['u_df'] = None
-
-    st.markdown('<div class="main-card">', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("1. Internal Policies")
-        f1 = st.file_uploader("Upload CSV", key="p", type=["csv"])
-        if f1: st.session_state['p_df'] = pd.read_csv(f1); st.success(f"Ready: {len(st.session_state['p_df'])} policies")
-    
-    with c2:
-        st.subheader("2. Regulatory Controls")
-        f2 = st.file_uploader("Upload CSV", key="u", type=["csv"])
-        if f2: st.session_state['u_df'] = pd.read_csv(f2); st.success(f"Ready: {len(st.session_state['u_df'])} controls")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- 6. PAGE: MAPPING ---
-def render_mapping():
-    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Mapping</div>', unsafe_allow_html=True)
-    st.title("Control Mapping Engine")
-    
-    if st.session_state.get('p_df') is None or st.session_state.get('u_df') is None:
-        st.warning("⚠️ Data missing. Go to Data Ingestion."); return
-
-    st.markdown('<div class="main-card">', unsafe_allow_html=True)
-    threshold = st.slider("Match Confidence Threshold", 0, 100, 25)
-    st.write("")
-    
-    if st.button("🚀 Run AI Semantic Mapping"):
-        with st.status("Processing Knowledge Base...", expanded=True):
-            st.write("Loading Neural Network...")
-            embedder = load_embedding_model()
-            p_df, u_df = st.session_state['p_df'], st.session_state['u_df']
-            
-            p_emb = embedder.encode(p_df['Policy_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
-            u_emb = embedder.encode(u_df['Control_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
-            
-            st.write("Generating Audit Plans...")
-            bar = st.progress(0)
-            
-            for i in range(len(p_df.head(5))):
-                bar.progress((i+1)/5)
-                scores = util.cos_sim(p_emb[i], u_emb)[0]
-                best_idx = torch.topk(scores, k=1)[1][0].item()
-                ctrl = u_df.iloc[best_idx]
-                plan = call_gemini(f"Role: Auditor. Control: {ctrl['Control_Text']}. Policy: {p_df.iloc[i]['Policy_Text']}. Task: Write concise test procedure.")
-                db_save_mapping(ctrl['Control_ID'], ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'], plan)
-            
-            st.success("Mapping Complete & Saved.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- 7. PAGE: EVALUATION GUIDANCE ---
-def render_evaluation():
-    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Evaluation</div>', unsafe_allow_html=True)
-    st.title("Evaluation Guidance")
-    
-    df = db_get_mappings()
-    if df.empty: st.info("No mappings found."); return
-
-    st.markdown(f"**Total Controls:** {len(df)}")
-    for i, row in df.iterrows():
-        icon = "🟢" if row['status'] == 'PASS' else "🔴" if row['status'] == 'FAIL' else "⚪"
-        with st.expander(f"{icon} {row['control_id']} (Status: {row['status']})"):
-            st.markdown(f"**Control:** {row['control_text']}")
-            st.markdown(f"**Policy:** {row['policy_text']}")
-            st.info(f"**AI Test Plan:**\n{row['ai_plan']}")
-
-# --- 8. PAGE: AUDIT AGENTS ---
-def render_agents():
-    st.markdown('<div style="color:#64748b; margin-bottom:5px;">Workspace / Audit Agents</div>', unsafe_allow_html=True)
-    st.title("Audit Agents")
-    
-    df = db_get_mappings()
-    if df.empty: st.warning("Please map controls first."); return
-    
-    st.markdown('<div class="main-card">', unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 2])
-    
-    with c1:
-        selected_id = st.selectbox("Select Control", df['control_id'])
-        record = df[df['control_id'] == selected_id].iloc[0]
-        st.info(f"**Req:** {record['control_text']}")
-
-    with c2:
-        st.subheader("📡 Evidence Connector")
-        f = st.file_uploader("Upload Wiz/AWS JSON", type=['json'], key=f"up_{selected_id}")
-        
-        if f:
-            evidence = json.load(f)
-            if st.button("Run AI Audit"):
-                with st.spinner("Analyzing..."):
-                    prompt = f"Role: Auditor. Control: {record['control_text']}. Evidence: {json.dumps(evidence)}. Output: 'PASS' or 'FAIL' followed by 1 sentence reason."
-                    res = call_gemini(prompt)
-                    status = "PASS" if "PASS" in res.upper() else "FAIL"
-                    db_update_audit(selected_id, status, res, f.name)
-                    st.rerun()
-    
-    if record['status'] != 'Untested':
-        badge_class = "pass-badge" if record['status'] == 'PASS' else "fail-badge"
-        st.markdown(f"""<div style="margin-top:20px; padding:15px; border:1px solid #e2e8f0; border-radius:8px;">
-            <span class="{badge_class}">{record['status']}</span> <span style="margin-left:10px;">{record['last_result']}</span>
-        </div>""", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown(f"### 📜 Audit History")
-    history = db_get_history(selected_id)
-    if not history.empty: st.dataframe(history, use_container_width=True)
-
-# --- 9. SIDEBAR LAYOUT ---
+# --- 9. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    # Logo
     st.markdown("""
     <div class="logo-container">
         <div class="logo-box">U</div>
         <div class="logo-text">UCF Platform</div>
     </div>
+    <div class="menu-header">Menu</div>
     """, unsafe_allow_html=True)
     
-    # Menu Header
-    st.markdown('<div class="menu-header">Menu</div>', unsafe_allow_html=True)
-    
-    # Navigation (Reordered matching image)
+    # Custom Menu Order
     page = st.radio("Navigation", [
         "Dashboard", 
         "Data Ingestion", 
@@ -396,8 +410,7 @@ with st.sidebar:
     ], label_visibility="collapsed")
     
     st.write("---")
-    st.caption("v3.0 (Cloud Edition / Gemini)")
-    
+    st.caption("v3.3 (Production)")
     if st.button("Reset DB"):
         c.execute("DELETE FROM mappings"); c.execute("DELETE FROM audit_logs"); conn.commit()
         st.rerun()
@@ -405,6 +418,6 @@ with st.sidebar:
 # --- 10. ROUTING ---
 if page == "Dashboard": render_dashboard()
 elif page == "Data Ingestion": render_ingestion()
-elif page == "Control Mapping": render_mapping()
+elif page == "Control Mapping": render_mapping_view()
 elif page == "Evaluation Guidance": render_evaluation()
 elif page == "Audit Agents": render_agents()
