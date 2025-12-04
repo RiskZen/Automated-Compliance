@@ -29,6 +29,7 @@ st.markdown("""
     .main-card { background-color: white; border-radius: 12px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 20px; }
     .metric-val { font-size: 2.5rem; font-weight: 700; color: #0f172a; }
     .metric-lbl { color: #64748b; font-size: 0.9rem; font-weight: 600; text-transform: uppercase; }
+    .agent-terminal { background-color: #1e1e1e; color: #00ff00; font-family: 'Courier New', monospace; padding: 15px; border-radius: 5px; font-size: 13px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -39,35 +40,67 @@ def load_embedding_model():
 
 def call_gemini(prompt):
     try:
-        # 1. Setup API
         if "GOOGLE_API_KEY" in st.secrets:
             genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+            
+            # Smart Model Selection
+            candidate_models = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro']
+            for model_name in candidate_models:
+                try:
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(prompt)
+                    return response.text
+                except:
+                    continue
+            return "❌ Error: No working Gemini model found for this key."
         else:
             return "Error: GOOGLE_API_KEY missing in Secrets."
-
-        # 2. UPDATED LIST: Prioritize the models actually available to your key
-        candidate_models = [
-            'gemini-flash-latest',       # Best choice (Generic Alias)
-            'gemini-2.5-flash',          # High speed 2025 model
-            'gemini-2.0-flash',          # Fallback
-            'gemini-pro-latest'          # Fallback Pro
-        ]
-
-        # 3. Try to generate content
-        for model_name in candidate_models:
-            try:
-                # print(f"Trying model: {model_name}...") # Debugging line
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
-                return response.text
-            except Exception:
-                continue # Try the next model in the list
-
-        # 4. Final Fallback if loop finishes without success
-        return "❌ Error: Could not connect to any Gemini model. Check API Quota."
-
     except Exception as e:
-        return f"System Error: {e}"
+        return f"AI Error: {e}"
+
+# --- ENTERPRISE PROMPTS (THE UPGRADE) ---
+def generate_ai_guidance(control_text, policy_text):
+    prompt = f"""
+    You are a Senior IT Security Auditor (CISA).
+    
+    INPUT:
+    - Control: "{control_text}"
+    - Policy: "{policy_text}"
+    
+    TASK:
+    Create a rigorous Audit Test Plan.
+    
+    OUTPUT FORMAT (Markdown):
+    **1. Objective:** [One sentence summary]
+    **2. Technical Check:** [Specific API/Config to inspect]
+    **3. Success Criteria:** [Exact condition for PASS]
+    **4. Evidence:** [Required Artifact]
+    """
+    return call_gemini(prompt)
+
+def run_ai_audit(control_text, evidence_json):
+    prompt = f"""
+    You are an Automated Compliance Engine.
+    
+    CONTEXT:
+    - Requirement: "{control_text}"
+    - Evidence: {json.dumps(evidence_json)}
+    
+    LOGIC:
+    1. Identify key/value in JSON.
+    2. Compare against Requirement.
+    
+    OUTPUT:
+    - Start with "PASS" or "FAIL".
+    - Follow with a hyphen (-).
+    - Provide technical justification.
+    """
+    return call_gemini(prompt)
+
+# --- DB HELPERS (THE FIX IS HERE) ---
+def save_mapping(cid, ctxt, ptxt, plan):
+    c.execute("INSERT INTO mappings VALUES (?, ?, ?, ?, ?)", (cid, ctxt, ptxt, plan, 'Untested'))
+    conn.commit()
 
 def save_audit(cid, src, res, reason):
     c.execute("UPDATE mappings SET status = ? WHERE control_id = ?", (res, cid))
@@ -78,7 +111,7 @@ def save_audit(cid, src, res, reason):
 # --- 4. PAGE ROUTING ---
 def render_ingestion():
     st.title("📂 Data Ingestion")
-    st.info("Please upload valid CSV files (Comma Separated Values).")
+    st.info("Upload CSV files to begin.")
     
     c1, c2 = st.columns(2)
     with c1:
@@ -88,8 +121,7 @@ def render_ingestion():
             try:
                 st.session_state['p_df'] = pd.read_csv(f, encoding='utf-8-sig')
                 st.success(f"Loaded {len(st.session_state['p_df'])} rows")
-            except Exception as e:
-                st.error(f"Error reading file: {e}. Check if it is a valid CSV.")
+            except: st.error("Invalid CSV")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with c2:
@@ -99,23 +131,23 @@ def render_ingestion():
             try:
                 st.session_state['u_df'] = pd.read_csv(f, encoding='utf-8-sig')
                 st.success(f"Loaded {len(st.session_state['u_df'])} rows")
-            except Exception as e:
-                st.error(f"Error reading file: {e}. Check if it is a valid CSV.")
+            except: st.error("Invalid CSV")
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_mapping():
     st.title("🔗 Control Mapping")
     if 'p_df' not in st.session_state or 'u_df' not in st.session_state: 
-        st.warning("Please upload both CSV files in the 'Ingestion' tab first."); return
+        st.warning("Please upload CSVs in Ingestion tab."); return
     
     st.markdown('<div class="main-card">', unsafe_allow_html=True)
     if st.button("🚀 Run AI Mapping", use_container_width=True):
         embedder = load_embedding_model()
         p_df, u_df = st.session_state['p_df'], st.session_state['u_df']
         
-        # Check required columns
-        if 'Policy_Text' not in p_df.columns: st.error("Policy CSV missing 'Policy_Text' column"); return
-        if 'Control_Text' not in u_df.columns: st.error("Controls CSV missing 'Control_Text' column"); return
+        # Validation
+        if 'Policy_Text' not in p_df.columns or 'Control_Text' not in u_df.columns:
+            st.error("CSV columns mismatch. Need 'Policy_Text' and 'Control_Text'.")
+            return
 
         p_emb = embedder.encode(p_df['Policy_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
         u_emb = embedder.encode(u_df['Control_Text'].head(5).astype(str).tolist(), convert_to_tensor=True)
@@ -128,13 +160,19 @@ def render_mapping():
             scores = util.cos_sim(p_emb[i], u_emb)[0]
             best_idx = torch.topk(scores, k=1)[1][0].item()
             ctrl = u_df.iloc[best_idx]
-            plan = call_gemini(f"Write a 1-sentence audit test for: {ctrl['Control_Text']}")
+            
+            # Using the NEW Enterprise Prompt
+            plan = generate_ai_guidance(ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'])
+            
             save_mapping(ctrl['Control_ID'], ctrl['Control_Text'], p_df.iloc[i]['Policy_Text'], plan)
         st.success("Mapping Saved to DB")
     st.markdown('</div>', unsafe_allow_html=True)
     
-    df = pd.read_sql("SELECT control_id, control_text, status FROM mappings", conn)
-    if not df.empty: st.dataframe(df, use_container_width=True)
+    df = pd.read_sql("SELECT control_id, control_text, ai_plan FROM mappings", conn)
+    if not df.empty: 
+        for i, row in df.iterrows():
+            with st.expander(f"{row['control_id']} - Audit Plan"):
+                st.markdown(row['ai_plan'])
 
 def render_testing():
     st.title("🤖 Automated Control Testing")
@@ -147,7 +185,6 @@ def render_testing():
         sel = st.selectbox("Select Control", df['control_id'])
         row = df[df['control_id'] == sel].iloc[0]
         st.info(f"**Req:** {row['control_text']}")
-        st.caption(f"**Plan:** {row['ai_plan']}")
         st.markdown('</div>', unsafe_allow_html=True)
         
     with c2:
@@ -156,11 +193,15 @@ def render_testing():
         if f and st.button("Run AI Audit"):
             try:
                 evidence = json.load(f)
-                st.json(evidence, expanded=False)
-                with st.spinner("Analyzing..."):
-                    res = call_gemini(f"Role: Auditor. Control: {row['control_text']}. Evidence: {evidence}. Rules: If evidence supports control, output 'PASS'. If not, output 'FAIL'. Follow with 1 sentence reason.")
+                st.markdown(f"<div class='agent-terminal'>{json.dumps(evidence, indent=2)[:500]}...</div>", unsafe_allow_html=True)
+                
+                with st.spinner("Analyzing Evidence..."):
+                    # Using the NEW Enterprise Prompt
+                    res = run_ai_audit(row['control_text'], evidence)
+                    
                     status = "PASS" if "PASS" in res.upper() else "FAIL"
                     save_audit(sel, "JSON Upload", status, res)
+                    
                     if status == "PASS": st.success(f"✅ {res}")
                     else: st.error(f"❌ {res}")
             except Exception as e:
